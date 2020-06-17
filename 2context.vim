@@ -1,8 +1,54 @@
 " Author    : Aditya Mahajan <adityam [at] umich [dot] edu> 
-" version   : 2011.12.23
+" version   : 2020.05.17
 " license   : Simplified BSD License
 
 " This script is part of the t-vim module for ConTeXt. It is based on 2html.vim.  
+
+" This script is invoked by the `t-vim` module with the options
+"     vim -c "syntax manual" -c "set syntax=name" ...
+" The option `syntax manual` loads `$VIMRUNTIME/syntax/manual.vim`, which
+" loads `$VIMRUNTIME/syntax/synload.vim`, which in turn loads,
+" `$VIMRUNTIME/syntax/syncolo.vim`, which defines syntax highlighting for
+" `preffered groups` and maps `minor groups` to `preffered groups`. See `:he
+" group-name` for details. We want the minor groups to appear in the output,
+" so we define a simple mapping for them:
+
+" Minor group of Constant
+hi String      cterm=NONE
+hi Character   cterm=NONE
+hi Number      cterm=NONE
+hi Boolean     cterm=NONE
+hi Float       cterm=NONE
+
+" Minor group of Identifier
+hi Function    cterm=NONE
+
+" Minor group of Statement
+hi Conditional cterm=NONE
+hi Repeat      cterm=NONE
+hi Label       cterm=NONE
+hi Operator    cterm=NONE
+hi Keyword     cterm=NONE
+hi Exception   cterm=NONE
+
+" Minor group of PreProc
+hi Include     cterm=NONE
+hi Define      cterm=NONE
+hi Macro       cterm=NONE
+hi PreCondit   cterm=NONE
+
+" Minor group of Type
+hi StorageClass cterm=NONE
+hi Structure    cterm=NONE
+hi Typedef      cterm=NONE
+
+" Minor group of Special
+hi Tag             cterm=NONE
+hi SpecialChar     cterm=NONE
+hi Delimiter       cterm=NONE
+hi SpecialComment  cterm=NONE
+hi Debug           cterm=NONE
+
 " Since this script is called by the t-vim module, we assume that Two buffers
 " are open. The first buffer is the input buffer, and the second buffer is the
 " output buffer. The script parses content line-by-line from the first buffer
@@ -41,37 +87,21 @@ if !exists("highlight")
 endif
 
 " Set escapecomments
-if !exists("escapecomments")
-  let escapecomments=0
+if exists("escapecomments")
+  let s:escapecomments=escapecomments " 0=off, 1=comments, 2=command
+else 
+  let s:escapecomments=0
 endif
 
-if !exists("showlinetags")
-   let showlinetags=1
-endif
-let s:startcomment = []
-let s:stopcomment = []
-for s:comsym in split(&comments,',')
-  let s:comsym = split(s:comsym,':')
-  echo s:comsym
-  if len(s:comsym) < 2
-    let s:startcomment = add(s:startcomment,escape(s:comsym[0],'\[*.]^$'))
-  elseif ( s:comsym[0] =~ 's\|m\|^[^e]*$' || s:comsym[0] =~ '^$' )
-    let s:startcomment = add(s:startcomment,escape(s:comsym[1],'\[*.]^$'))
-  else
-    let s:stopcomment = add(s:stopcomment,escape(s:comsym[1],'\[*.]^$'))
-  endif
-endfor
-if len(s:startcomment) < 1 && exists("+commentstring")
-  let s:havecomment = split(&commentstring,"%s")
-  if len(s:havecomment) > 0
-    let s:startcomment = add(s:startcomment,s:havecomment[0])
-    if len(s:havecomment) > 1
-      let s:stopcomment = add(s:stopcomment,s:havecomment[1])
-    endif
-  endif
-endif
-let s:endcomment = add(s:stopcomment,'$')
-let s:emptycomment = '^\(' . join(s:startcomment,'\|') . '\)\s*\(' . join(s:stopcomment,'\|') . '\)$'
+" Add a new syntax region to detect ConTeXt tags
+if s:escapecomments==2
+  syntax region vimtypingTEXcomment start="/BTEX" end="/ETEX" transparent oneline containedin=ALL contains=NONE
+
+  " Find the id of /BTEX ... /ETEX syntax region
+  let s:texcommentid = hlID("vimtypingTEXcomment")
+else
+  let s:texcommentid = -1 " Assuming that all ids are positive. Not documented
+end
 
 let s:strip = strlen( matchstr( getline(s:lstart), '^\s*' ) )
 
@@ -104,6 +134,7 @@ let s:lnum = s:lstart
 while s:lnum <= s:lstop
 " Get the current line
   let s:line = getline(s:lnum)
+
   let s:len  = strlen(s:line)
   let s:new  = '' 
 
@@ -111,89 +142,53 @@ while s:lnum <= s:lstop
   let s:col = s:strip + 1
   while s:col <= s:len
     let s:startcol = s:col " The start column for processing text
-    let s:id       = synID (s:lnum, s:col, 1)
-    let s:col      = s:col + 1
+
+    " Check if the next transprarent syntax is "vimtypingTEXcomment". If not, 
+    " find the next non-transparent syntax id. 
+    let s:id = synID (s:lnum, s:col, 0)
+    if s:id == s:texcommentid
+      let s:texcomment = 1
+    else
+      let s:texcomment = 0
+      let s:id = synID (s:lnum, s:col, 1)
+    endif
+    let s:col = s:col + 1
 " Speed loop (it's small - that's the trick)
 " Go along till we find a change in synID
-    while s:col <= s:len && s:id == synID(s:lnum, s:col, 1) 
+    while s:col <= s:len 
+      " If there is a "vimtypingTEXcomment" inside another syntax id, 
+      " "vimtypingTEXcomment" should get preference
+      let s:nextid = synID(s:lnum, s:col, 0)
+      if !s:texcomment && s:nextid != s:texcommentid
+        let s:nextid = synID(s:lnum, s:col, 1)
+      endif
+
+      if s:nextid != s:id
+        break
+      endif
+         
       let s:col = s:col + 1 
     endwhile
 
 " Output the text with the same synID, with class set to {s:id_name}
     let s:id      = synIDtrans (s:id)
     let s:id_name = synIDattr  (s:id, "name", "gui")
-    let s:temp    = strpart(s:line, s:startcol - 1, s:col - s:startcol)
+    if s:texcomment
+      " Remove /BTEX and /ETEX which are 5 characters wide
+      let s:temp = strpart(s:line, s:startcol + 5 - 1, s:col - s:startcol - 5 - 5)
+    else
+      let s:temp = strpart(s:line, s:startcol - 1, s:col - s:startcol)
+    end
 " Remove line endings (on unix machines reading windows files)
     let s:temp    = substitute(s:temp, '\r*$', '', '')
 " It might have happened that that one has been the last item in a row, so
 " we don't need to print in in that case
     if strlen(s:temp) > 0
 " Change special TeX characters to escape sequences.
-
-      let s:tags = ''
-      if ( s:id_name != "Comment" || s:temp =~ s:emptycomment )
-          let s:temp = escape( s:temp, '\{}')
-      else 
-        let s:strip = s:temp
-       	let s:foundtag = matchstrpos(s:temp,s:preservetagspattern)
-		if s:foundtag[1] < 0
-          let s:temp = ''
-          let s:tail = 0
-        else
-          let s:temp = s:temp[:(s:foundtag[1]-1)]
-          let s:tail = s:foundtag[2]
-        endif
-        if !(escapecomments)
-          if ( showlinetags || s:foundtag[1] < 0 )
-" extract \someline, \linestart, \linestop tags and ensure that they are
-" processed by lex eventhough escapecomments is off. In addition keep them visible in
-" output if present 
-            let s:temp = escape(s:strip,'\{}')
-            while ( s:foundtag[1] >= 0 )
-              let s:tags = s:tags . s:foundtag[0]
-       	      let s:foundtag = matchstrpos(s:strip,s:preservetagspattern,s:foundtag[2])
-            endwhile
-          else
-" extract \someline, \linestart, \linestop tags and ensure that they are
-" processed by lex eventhough escapecomments is off.
-            let s:temp = escape(s:temp,'\{}')
-            while ( s:foundtag[1] >= 0 )
-              let s:tags = s:tags . s:foundtag[0]
-              let s:temp = s:temp . escape(s:strip[(s:tail) : (s:foundtag[1]-1)],'\{}')
-              let s:tail = s:foundtag[2]
-       	      let s:foundtag = matchstrpos(s:strip,s:preservetagspattern,s:tail)
-            endwhile
-            let s:temp = s:temp . escape(s:strip[(s:tail):],'\{}')
-          endif
-        elseif showlinetags
-" extract \someline, \linestart, \linestop tags and show them literally in
-" output disregarding that escapecomments is set 
-          while (s:foundtag[1] >= 0 )
-            let s:tags = s:tags . s:foundtag[0]
-            let s:temp = s:temp . s:strip[(s:tail) : (s:foundtag[1]-1) ] . escape(s:foundtag[0],'\{}')
-            let s:tail = s:foundtag[2]
-       	    let s:foundtag = matchstrpos(s:strip,s:preservetagspattern,s:tail)
-          endwhile
-          let s:temp = s:temp . s:strip[(s:tail):]
-        else
-" extract \someline, \linestart, \linestop tags disregarding the fact that 
-" escapecomments is set anyway.
-          while ( s:foundtag[1] >= 0 )
-            let s:tags = s:tags . s:foundtag[0]
-            let s:temp = s:temp . s:strip[(s:tail) : (s:foundtag[1]-1) ]
-            let s:tail = s:foundtag[2]
-       	    let s:foundtag = matchstrpos(s:strip,s:preservetagspattern,s:tail)
-          endwhile
-          let s:temp = s:temp . s:strip[(s:tail):]
-        endif
-" check if comment falls empty after removing all \someline, \startline and
-" \stopline tags. If it does hide it from syntaxhighlighting
-        if ( s:temp =~ s:emptycomment )
-           let s:temp = ''
-           let s:id_name = ''
-        endif
+      if !(s:texcomment || (s:escapecomments == 1) && s:id_name == "Comment")
+        let s:temp = escape( s:temp, '\{}')
       endif
-      if !empty(s:id_name)
+      if !(s:texcomment || empty(s:id_name))
         let s:temp = '\SYN[' . s:id_name . ']{' . s:temp .  '}'
       endif
 " assemble output and append string containing \someline, \startline and
